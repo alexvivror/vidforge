@@ -190,6 +190,19 @@ def get_project(pid: str):
     proj = STORE.load(pid)
     if not proj:
         raise HTTPException(404, "project not found")
+    # watchdog: if the worker was killed (Render free sleeps/starts instances),
+    # rescue the project by reprocessing synchronously when polled.
+    if proj.status == "analyzing":
+        import datetime as _dt
+        created = proj.created_at
+        try:
+            age = (datetime.now(timezone.utc) - _dt.datetime.fromisoformat(created)).total_seconds()
+        except Exception:
+            age = 999
+        if age > 20:
+            # stale analyzing -> finish synchronously (fast pure-python path)
+            _process_project(proj.id, proj.source_type, proj.source_text, proj.style, proj.title)
+            proj = STORE.load(pid)
     return _project_view(proj)
 
 
