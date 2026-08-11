@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -67,7 +67,7 @@ def status():
 
 
 @app.post("/api/projects")
-def create_project(body: ProjectCreate):
+def create_project(body: ProjectCreate, background_tasks: BackgroundTasks):
     if not body.source.strip():
         raise HTTPException(400, "source is required")
     if body.style not in STYLES:
@@ -82,35 +82,40 @@ def create_project(body: ProjectCreate):
         status="analyzing",
         created_at=datetime.now(timezone.utc).isoformat(),
     )
+    # stash the raw source for the background worker
+    proj.source_text = body.source[:20000]
     STORE.save(proj)
+    background_tasks.add_task(_process_project, pid, body.source_type, body.source, body.style, body.title)
+    return _project_view(proj)
 
+
+def _process_project(pid: str, source_type: str, source: str, style: str, title: str) -> None:
+    """Background worker: extract → summarize → script → enrich → save."""
+    proj = STORE.load(pid)
+    if not proj:
+        return
     try:
-        text = pipeline.extract_source(body.source_type, body.source)
+        text = pipeline.extract_source(source_type, source)
         if len(text.strip()) < 40:
-            raise HTTPException(400, "Could not extract enough content from the source.")
+            proj.status = "failed"
+            proj.script = ""
+            STORE.save(proj)
+            return
         proj.source_text = text[:20000]
-        proj.title = body.title or pipeline._title_from(text)
+        proj.title = title or pipeline._title_from(text)
         proj.outline = pipeline.build_outline(text, max_slides=6)
-        proj.script, proj.script_provider = llm.generate_script(proj.outline, proj.style, proj.title)
-        proj.words, proj.duration = pipeline.word_timeline(proj.script, proj.style, proj.outline)
-        # enrich each slide with a copyright-free image or generated gradient
+        proj.script, proj.script_provider = llm.generate_script(proj.outline, style, proj.title)
+        proj.words, proj.duration = pipeline.word_timeline(proj.script, style, proj.outline)
         for i, slide in enumerate(proj.outline):
             imgs = images.search_images(slide["heading"], n=1)
             slide["image"] = imgs[0] if imgs else {"url": None, "source": "generated"}
             slide["bg"] = images.svg_background(proj.title + str(i))
         proj.marp, proj.marp_html = _build_marp(proj)
         proj.status = "ready"
-        STORE.save(proj)
-    except HTTPException:
-        proj.status = "failed"
-        STORE.save(proj)
-        raise
     except Exception as e:
+        print(f"[worker] {pid} failed: {e}")
         proj.status = "failed"
-        STORE.save(proj)
-        raise HTTPException(500, f"Processing failed: {e}")
-
-    return _project_view(proj)
+    STORE.save(proj)
 
 
 def _build_marp(proj):
@@ -119,7 +124,7 @@ def _build_marp(proj):
 
 
 @app.post("/api/projects/upload")
-async def upload_project(file: UploadFile = File(...), style: str = Form("educational")):
+async def upload_project(file: UploadFile = File(...), style: str = Form("educational"), background_tasks: BackgroundTasks = BackgroundTasks()):
     data = await file.read()
     try:
         text = data.decode("utf-8", errors="ignore")
@@ -133,7 +138,7 @@ async def upload_project(file: UploadFile = File(...), style: str = Form("educat
         raise HTTPException(400, "Could not read text from the uploaded file.")
     body = ProjectCreate(source_type="text", source=text, style=style,
                          title=file.filename.rsplit(".", 1)[0].replace("-", " ").replace("_", " "))
-    return create_project(body)
+    return create_project(body, background_tasks)
 
 
 @app.post("/api/projects/{pid}/script")

@@ -94,8 +94,18 @@ async function generate() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Request failed");
-    hideLoading();
-    loadProject(data);
+    // background processing — poll until ready
+    const pid = data.id;
+    const started = Date.now();
+    while (true) {
+      const r2 = await fetch(`/api/projects/${pid}`);
+      const d2 = await r2.json();
+      if (d2.status === "ready") { hideLoading(); loadProject(d2); return; }
+      if (d2.status === "failed") { hideLoading(); showError(d2.script ? d2.script : "Processing failed — the source may not have enough readable content."); return; }
+      if (Date.now() - started > 180000) { hideLoading(); showError("Timed out — please try again."); return; }
+      showLoading(`Analyzing source… (${Math.round((Date.now() - started) / 1000)}s)`);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
   } catch (e) {
     hideLoading();
     showError(e.message);
@@ -113,7 +123,18 @@ async function uploadFile(file, style) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Upload failed");
     hideLoading();
-    loadProject(data);
+    // background processing — poll until ready
+    const pid = data.id;
+    const started = Date.now();
+    while (true) {
+      const r2 = await fetch(`/api/projects/${pid}`);
+      const d2 = await r2.json();
+      if (d2.status === "ready") { hideLoading(); loadProject(d2); return; }
+      if (d2.status === "failed") { hideLoading(); showError("Processing failed — the file may not have enough readable content."); return; }
+      if (Date.now() - started > 180000) { hideLoading(); showError("Timed out — please try again."); return; }
+      showLoading(`Analyzing file… (${Math.round((Date.now() - started) / 1000)}s)`);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
   } catch (e) {
     hideLoading();
     showError(e.message);
