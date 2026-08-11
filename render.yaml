@@ -1,0 +1,27 @@
+# VidForge AI — Research/Article → Narrated Video
+#
+# Deployment: push to GitHub, then Render → New → Blueprint
+# (this render.yaml is auto-detected). All providers are OPTIONAL —
+# the app runs free with zero API keys (browser TTS, generated slides).
+
+services:
+  - type: web
+    name: vidforge
+    runtime: python
+    plan: free
+    buildCommand: |
+      python -m venv venv
+      ./venv/bin/pip install -r requirements.txt
+    startCommand: ./venv/bin/python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      # Optional premium providers (set in Render dashboard):
+      # - key: OPENCODEZEN_API_KEY
+      # - key: OPENCODEZEN_MODEL
+      # - key: ELEVENLABS_API_KEY
+      # - key: NVIDIA_NIM_API_KEY
+      # - key: PEXELS_API_KEY
+      # - key: UNSPLASH_ACCESS_KEY
+      # - key: PIXABAY_API_KEY
+      # - key: FIRECRAWL_API_KEY
