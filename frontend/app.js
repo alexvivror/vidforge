@@ -132,6 +132,9 @@ function renderDemo(proj) {
   renderTimeline();
   showSlide(0);
   populateVoices();
+  $("#stageBadge").hidden = false;
+  updateTimeDisplay();
+  updateSlideIndicator();
   // auto-play the demo after a moment (speech may be blocked until user interacts)
   setTimeout(() => {
     try { play(); } catch { /* autoplay policy — user clicks play */ }
@@ -371,6 +374,7 @@ function showSlide(i) {
   state.slideIndex = Math.max(0, Math.min(i, state.project.outline.length - 1));
   document.querySelectorAll(".slide").forEach((s, idx) => s.classList.toggle("active", idx === state.slideIndex));
   updateTimeline();
+  updateSlideIndicator();
 }
 
 /* ---------------- script + highlighting ---------------- */
@@ -399,10 +403,117 @@ function updateTimeline() {
   });
 }
 
+/* ---------------- playback rate / volume state ---------------- */
+let playbackRate = 1;
+let volumeLevel = 1;
+let muted = false;
+
 /* ---------------- play / pause ---------------- */
 $("#btnPlay").addEventListener("click", () => (state.playing ? pause() : play()));
+$("#btnBigPlay").addEventListener("click", () => { $("#btnBigPlay").style.opacity = 0; state.playing ? pause() : play(); });
 $("#btnNext").addEventListener("click", () => { pause(); showSlide(state.slideIndex + 1); });
 $("#btnPrev").addEventListener("click", () => { pause(); showSlide(state.slideIndex - 1); });
+$("#btnRestart").addEventListener("click", () => { pause(); showSlide(0); setScrubber(0); highlightWord(0); });
+
+/* ---------------- speed ---------------- */
+$("#btnSpeed").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const menu = $("#speedMenu");
+  menu.hidden = !menu.hidden;
+});
+document.querySelectorAll("#speedMenu button").forEach((b) => {
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    playbackRate = parseFloat(b.dataset.rate);
+    $("#btnSpeed").textContent = `${playbackRate}×`;
+    $("#speedMenu").hidden = true;
+  });
+});
+document.addEventListener("click", () => { $("#speedMenu").hidden = true; });
+
+/* ---------------- volume / mute ---------------- */
+$("#volumeSlider").addEventListener("input", (e) => {
+  volumeLevel = parseFloat(e.target.value);
+  muted = volumeLevel === 0;
+  updateVolumeUI();
+});
+$("#btnMute").addEventListener("click", () => {
+  muted = !muted;
+  if (muted) { volumeLevel = parseFloat($("#volumeSlider").value) || 1; $("#volumeSlider").value = 0; }
+  else { $("#volumeSlider").value = volumeLevel || 1; }
+  updateVolumeUI();
+});
+function updateVolumeUI() {
+  const mutedNow = muted || parseFloat($("#volumeSlider").value) === 0;
+  $("#iconVolOn").style.display = mutedNow ? "none" : "";
+  $("#iconVolOff").style.display = mutedNow ? "" : "none";
+  if (state.utter) state.utter.volume = mutedNow ? 0 : (parseFloat($("#volumeSlider").value) || 1);
+  if (state.audioEl) state.audioEl.volume = mutedNow ? 0 : (parseFloat($("#volumeSlider").value) || 1);
+}
+
+/* ---------------- fullscreen ---------------- */
+$("#btnFullscreen").addEventListener("click", () => {
+  const stage = $("#stage");
+  if (!document.fullscreenElement) {
+    stage.requestFullscreen?.().catch(() => {});
+  } else {
+    document.exitFullscreen?.();
+  }
+});
+
+/* ---------------- scrubber ---------------- */
+const scrubTrack = $("#scrubTrack");
+function setScrubber(pct) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  $("#scrubFill").style.width = `${clamped}%`;
+  $("#scrubThumb").style.left = `${clamped}%`;
+}
+function scrubberPctFromEvent(e) {
+  const rect = scrubTrack.getBoundingClientRect();
+  const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+  return (x / rect.width) * 100;
+}
+let scrubbing = false;
+function scrubTo(e) {
+  const pct = scrubberPctFromEvent(e);
+  setScrubber(pct);
+  const total = state.project ? state.project.duration || 0 : 0;
+  const t = (pct / 100) * total;
+  state.currentTime = t;
+  updateTimeDisplay();
+  // jump to the slide at that time
+  const words = state.project?.words || [];
+  let slideIdx = 0;
+  for (const w of words) { if (w.start <= t) slideIdx = w.slide; else break; }
+  showSlide(slideIdx);
+}
+scrubTrack.addEventListener("mousedown", (e) => { scrubbing = true; pause(); scrubTo(e); });
+document.addEventListener("mousemove", (e) => { if (scrubbing) scrubTo(e); });
+document.addEventListener("mouseup", () => { scrubbing = false; });
+scrubTrack.addEventListener("touchstart", (e) => { scrubbing = true; pause(); scrubTo(e); }, { passive: true });
+document.addEventListener("touchmove", (e) => { if (scrubbing) scrubTo(e); }, { passive: true });
+document.addEventListener("touchend", () => { scrubbing = false; });
+scrubTrack.addEventListener("mousemove", (e) => {
+  const rect = scrubTrack.getBoundingClientRect();
+  const pct = ((e.clientX - rect.left) / rect.width) * 100;
+  $("#scrubHover").style.width = `${Math.max(0, Math.min(100, pct))}%`;
+});
+
+/* ---------------- time display ---------------- */
+function fmtTime(sec) { sec = Math.max(0, sec || 0); return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, "0")}`; }
+function updateTimeDisplay() {
+  const total = state.project ? state.project.duration || 0 : 0;
+  $("#timeCurrent").textContent = fmtTime(state.currentTime);
+  $("#timeTotal").textContent = fmtTime(total);
+  if (total > 0) setScrubber((state.currentTime / total) * 100);
+}
+setInterval(updateTimeDisplay, 200);
+
+/* ---------------- slide indicator ---------------- */
+function updateSlideIndicator() {
+  const total = state.project?.outline?.length || 0;
+  if (total) $("#slideIndicator").textContent = `${state.slideIndex + 1} / ${total}`;
+}
 
 async function play() {
   if (!state.project) return;
@@ -433,11 +544,13 @@ async function play() {
   const words = state.project.script.split(/\s+/);
   state.utter = new SpeechSynthesisUtterance(state.project.script);
   if (state.voice) state.utter.voice = state.voice;
-  state.utter.rate = { educational: 1.0, fast_youtube: 1.2, documentary: 0.92, research: 0.95, explainer: 1.05, news: 1.1 }[state.project.style] || 1.0;
+  const baseRate = { educational: 1.0, fast_youtube: 1.2, documentary: 0.92, research: 0.95, explainer: 1.05, news: 1.1 }[state.project.style] || 1.0;
+  state.utter.rate = baseRate * playbackRate;
   state.utter.pitch = 1.0;
+  updateVolumeUI();
 
   let i = 0;
-  const wordMs = (state.project.duration || words.length * 0.3) / words.length * 1000;
+  const wordMs = (state.project.duration || words.length * 0.3) / words.length * 1000 / playbackRate;
   state.wordTimer = setInterval(() => {
     if (!state.playing) return;
     highlightWord(i);
