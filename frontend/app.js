@@ -85,6 +85,59 @@ const state = {
   audioEl: null,
 };
 
+/* ---------------- hero buttons ---------------- */
+$("#btnHeroAI").addEventListener("click", () => {
+  document.getElementById("create").scrollIntoView({ behavior: "smooth" });
+  setTimeout(() => document.getElementById("inputText").focus(), 600);
+});
+$("#btnHeroDemo").addEventListener("click", () => {
+  document.getElementById("previewer").scrollIntoView({ behavior: "smooth" });
+  setTimeout(() => { if (!state.project) loadDemoProject(); else play(); }, 500);
+});
+
+// ---------------- auto demo on load ----------------
+window.addEventListener("DOMContentLoaded", () => {
+  setTimeout(loadDemoProject, 400);
+});
+
+async function loadDemoProject() {
+  try {
+    const res = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_type: "text",
+        source: "VidForge AI turns research into narrated videos directly in your browser. It extracts the key facts from articles, papers and PDFs. It builds a presentation with slides and bullet points. It writes a creator-style script in the style you choose. It generates a voice and highlights every word as it speaks. And it adds sound effects at the right moments. All processing happens in the browser.",
+        style: "educational",
+        title: "What is VidForge AI?",
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) return;
+    const pid = data.id;
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const r2 = await fetch(`/api/projects/${pid}`);
+      const d2 = await r2.json();
+      if (d2.status === "ready") { renderDemo(d2); return; }
+      if (d2.status === "failed") return;
+    }
+  } catch { /* demo is optional */ }
+}
+
+function renderDemo(proj) {
+  state.project = proj;
+  state.slideIndex = 0;
+  renderSlides();
+  renderTimeline();
+  showSlide(0);
+  populateVoices();
+  // auto-play the demo after a moment (speech may be blocked until user interacts)
+  setTimeout(() => {
+    try { play(); } catch { /* autoplay policy — user clicks play */ }
+  }, 800);
+}
+
 /* ---------------- tabs ---------------- */
 let activeTab = "text";
 document.querySelectorAll(".tab").forEach((tab) => {
