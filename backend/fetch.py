@@ -7,11 +7,13 @@ import urllib.request
 from backend.providers import CONFIG
 
 
-def fetch_article(url: str) -> tuple[str, str]:
+def fetch_article(url: str, cfg=None) -> tuple[str, str]:
     """Returns (text, provider)."""
-    if CONFIG["firecrawl_key"]:
+    if cfg is None:
+        cfg = CONFIG
+    if cfg["firecrawl_key"]:
         try:
-            text = _firecrawl(url)
+            text = _firecrawl(url, cfg)
             if len(text.strip()) > 40:
                 return text, "firecrawl"
         except Exception as e:
@@ -28,12 +30,12 @@ def fetch_article(url: str) -> tuple[str, str]:
     raise RuntimeError(f"Could not extract article from {url}")
 
 
-def _firecrawl(url: str) -> str:
+def _firecrawl(url: str, cfg) -> str:
     payload = {"url": url, "formats": ["markdown"], "onlyMainContent": True}
     req = urllib.request.Request(
         "https://api.firecrawl.dev/v1/scrape",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {CONFIG['firecrawl_key']}"},
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {cfg['firecrawl_key']}"},
     )
     with urllib.request.urlopen(req, timeout=60) as r:
         data = json.loads(r.read().decode())

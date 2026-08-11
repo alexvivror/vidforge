@@ -9,41 +9,42 @@ import urllib.request
 from backend.providers import CONFIG
 
 
-def tts_provider() -> str:
-    if CONFIG["elevenlabs_key"]:
+def tts_provider(cfg=None) -> str:
+    if cfg is None:
+        cfg = CONFIG
+    if cfg["elevenlabs_key"]:
         return "elevenlabs"
-    if CONFIG["nvidia_nim_key"]:
+    if cfg["nvidia_nim_key"]:
         return "nvidia_nim"
     return "browser"
 
 
-def elevenlabs_synthesize(text: str, voice: str | None = None) -> tuple[str, str]:
-    """Returns (audio_url, provider). Audio URL is the ElevenLabs endpoint the
-    browser can stream directly (needs the key client-side too, so we proxy it
-    through /api/tts/proxy)."""
-    voice = voice or CONFIG["elevenlabs_voice"]
+def elevenlabs_synthesize(text: str, voice: str | None = None, cfg=None) -> tuple[bytes, str]:
+    """Returns (audio_bytes, provider)."""
+    if cfg is None:
+        cfg = CONFIG
+    voice = voice or cfg["elevenlabs_voice"]
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice}"
     payload = {"text": text, "model_id": "eleven_multilingual_v2",
                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
     req = urllib.request.Request(url, data=json.dumps(payload).encode(),
                                  headers={"Content-Type": "application/json",
-                                          "xi-api-key": CONFIG["elevenlabs_key"],
+                                          "xi-api-key": cfg["elevenlabs_key"],
                                           "Accept": "audio/mpeg"})
     with urllib.request.urlopen(req, timeout=60) as r:
         audio = r.read()
-    # store on disk; served back through /api/tts/audio/{pid}
     return audio, "elevenlabs"
 
 
-def nim_synthesize(text: str) -> tuple[bytes, str]:
-    """NVIDIA NIM TTS (e.g. nvidia/parakeet or a hosted TTS NIM). The exact
-    endpoint/model depends on the NIM deployment; this targets the NVIDIA
-    hosted API shape."""
+def nim_synthesize(text: str, cfg=None) -> tuple[bytes, str]:
+    """NVIDIA NIM TTS (e.g. nvidia/parakeet or a hosted TTS NIM)."""
+    if cfg is None:
+        cfg = CONFIG
     url = "https://ai.api.nvidia.com/v1/audio/speech"
     payload = {"model": "nvidia/tts", "input": text, "voice": "en-US-JennyNeural"}
     req = urllib.request.Request(url, data=json.dumps(payload).encode(),
                                  headers={"Content-Type": "application/json",
-                                          "Authorization": f"Bearer {CONFIG['nvidia_nim_key']}",
+                                          "Authorization": f"Bearer {cfg['nvidia_nim_key']}",
                                           "Accept": "audio/mpeg"})
     with urllib.request.urlopen(req, timeout=60) as r:
         return r.read(), "nvidia_nim"

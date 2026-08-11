@@ -11,22 +11,24 @@ from backend.providers import CONFIG
 UA = {"User-Agent": "VidForge/1.0 (research video generator)"}
 
 
-def search_images(query: str, n: int = 3) -> list[dict]:
+def search_images(query: str, n: int = 3, cfg=None) -> list[dict]:
+    if cfg is None:
+        cfg = CONFIG
     try:
-        if CONFIG["pexels_key"]:
-            return _pexels(query, n)
-        if CONFIG["unsplash_key"]:
-            return _unsplash(query, n)
-        if CONFIG["pixabay_key"]:
-            return _pixabay(query, n)
+        if cfg["pexels_key"]:
+            return _pexels(query, n, cfg)
+        if cfg["unsplash_key"]:
+            return _unsplash(query, n, cfg)
+        if cfg["pixabay_key"]:
+            return _pixabay(query, n, cfg)
     except Exception as e:
         print(f"[providers] image search failed ({e})")
     return []
 
 
-def _pexels(query, n):
+def _pexels(query, n, cfg):
     url = f"https://api.pexels.com/v1/search?query={urllib.parse.quote(query)}&per_page={n}"
-    req = urllib.request.Request(url, headers={**UA, "Authorization": CONFIG["pexels_key"]})
+    req = urllib.request.Request(url, headers={**UA, "Authorization": cfg["pexels_key"]})
     with urllib.request.urlopen(req, timeout=20) as r:
         data = json.loads(r.read().decode())
     return [
@@ -35,9 +37,9 @@ def _pexels(query, n):
     ]
 
 
-def _unsplash(query, n):
+def _unsplash(query, n, cfg):
     url = f"https://api.unsplash.com/search/photos?query={urllib.parse.quote(query)}&per_page={n}"
-    req = urllib.request.Request(url, headers={**UA, "Authorization": f"Client-ID {CONFIG['unsplash_key']}"})
+    req = urllib.request.Request(url, headers={**UA, "Authorization": f"Client-ID {cfg['unsplash_key']}"})
     with urllib.request.urlopen(req, timeout=20) as r:
         data = json.loads(r.read().decode())
     return [
@@ -46,8 +48,8 @@ def _unsplash(query, n):
     ]
 
 
-def _pixabay(query, n):
-    url = (f"https://pixabay.com/api/?key={CONFIG['pixabay_key']}"
+def _pixabay(query, n, cfg):
+    url = (f"https://pixabay.com/api/?key={cfg['pixabay_key']}"
            f"&q={urllib.parse.quote(query)}&per_page={n}&image_type=photo")
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=20) as r:

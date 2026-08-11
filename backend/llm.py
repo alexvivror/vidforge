@@ -18,9 +18,9 @@ narration script for a {style} video. Requirements:
 Return ONLY the script text."""
 
 
-def _call_opencodezen(outline, style, title):
+def _call_opencodezen(outline, style, title, cfg):
     payload = {
-        "model": CONFIG["opencodezen_model"],
+        "model": cfg["opencodezen_model"],
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT.format(style=style)},
             {"role": "user", "content": json.dumps({"title": title, "outline": outline}, indent=1)},
@@ -29,9 +29,9 @@ def _call_opencodezen(outline, style, title):
         "max_tokens": 600,
     }
     req = urllib.request.Request(
-        CONFIG["opencodezen_base"] + "/chat/completions",
+        cfg["opencodezen_base"] + "/chat/completions",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {CONFIG['opencodezen_key']}"},
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {cfg['opencodezen_key']}"},
     )
     with urllib.request.urlopen(req, timeout=60) as r:
         data = json.loads(r.read().decode())
@@ -46,13 +46,15 @@ def _call_pollinations(outline, style, title):
         return r.read().decode().strip()
 
 
-def generate_script(outline, style, title) -> tuple[str, str]:
-    """Returns (script, provider_used)."""
+def generate_script(outline, style, title, cfg=None) -> tuple[str, str]:
+    """Returns (script, provider_used). cfg = effective config with keys."""
+    if cfg is None:
+        cfg = CONFIG
     try:
-        if CONFIG["opencodezen_key"]:
-            return _call_opencodezen(outline, style, title), "opencodezen"
-        if CONFIG["pollinations_key"]:
-            return _call_pollinations(outline, style, title), "pollinations"
+        if cfg["opencodezen_key"]:
+            return _call_opencodezen(outline, style, title, cfg), "opencodezen"
+        if cfg["pollinations_key"]:
+            return _call_pollinations(outline, style, title, cfg), "pollinations"
     except Exception as e:
         print(f"[providers] LLM failed ({e}), falling back to extractive")
     return pipeline.build_script(title, outline, style), "builtin-extractive"

@@ -3,6 +3,76 @@
 
 const $ = (s) => document.querySelector(s);
 
+// ---------------- API keys (localStorage, sent per-request) ----------------
+const KEYS_STORAGE = "vidforge-keys-v1";
+const KEY_FIELDS = [
+  { group: "OpenCode Zen — Script", fields: [
+    ["opencodezen", "API Key", "password"],
+    ["opencodezenModel", "Model", "text"],
+  ]},
+  { group: "ElevenLabs — TTS", fields: [
+    ["elevenlabs", "API Key", "password"],
+    ["elevenlabsVoice", "Voice ID", "text"],
+  ]},
+  { group: "NVIDIA NIM — TTS + Avatar", fields: [
+    ["nvidiaNim", "API Key", "password"],
+  ]},
+  { group: "Images — Unsplash · Pexels · Pixabay", fields: [
+    ["unsplash", "Unsplash Access Key", "password"],
+    ["pexels", "Pexels API Key", "password"],
+    ["pixabay", "Pixabay API Key", "password"],
+  ]},
+  { group: "Article Fetch — Firecrawl", fields: [
+    ["firecrawl", "API Key", "password"],
+  ]},
+  { group: "SFX — Freesound", fields: [
+    ["freesound", "API Key", "password"],
+  ]},
+  { group: "Avatar Lip-Sync — Wav2Lip", fields: [
+    ["wav2lip", "Local / API Endpoint", "text"],
+  ]},
+];
+
+function loadKeys() {
+  try { return JSON.parse(localStorage.getItem(KEYS_STORAGE)) || {}; }
+  catch { return {}; }
+}
+function saveKeys(keys) {
+  localStorage.setItem(KEYS_STORAGE, JSON.stringify(keys));
+}
+function getKeys() { return loadKeys(); }
+
+// ---------------- settings modal ----------------
+function openSettings() {
+  const body = $("#settingsBody");
+  const keys = loadKeys();
+  body.innerHTML = KEY_FIELDS.map((g) => `
+    <div class="setting-group">
+      <h4>${g.group}</h4>
+      ${g.fields.map(([key, label, type]) => `
+        <div class="field">
+          <label>${label}</label>
+          <input type="${type}" data-key="${key}" value="${(keys[key] || "").replace(/"/g, "&quot;")}" autocomplete="off">
+        </div>`).join("")}
+    </div>`).join("");
+  $("#settingsModal").hidden = false;
+}
+
+$("#btnSettings").addEventListener("click", openSettings);
+$("#settingsClose").addEventListener("click", () => { $("#settingsModal").hidden = true; });
+$("#settingsSave").addEventListener("click", () => {
+  const keys = {};
+  document.querySelectorAll("#settingsBody input[data-key]").forEach((input) => {
+    keys[input.dataset.key] = input.value.trim();
+  });
+  saveKeys(keys);
+  $("#settingsModal").hidden = true;
+  const badge = document.querySelector(".badge");
+  if (badge) badge.textContent = "Keys saved ✓";
+  setTimeout(() => { if (badge) badge.textContent = "100% private · browser TTS"; }, 2500);
+});
+$("#settingsModal").addEventListener("click", (e) => { if (e.target === e.currentTarget) $("#settingsModal").hidden = true; });
+
 const state = {
   project: null,
   slideIndex: 0,
@@ -85,12 +155,13 @@ async function generate() {
     return showError("Please provide at least ~40 characters of source content.");
   }
   $("#errorBox").hidden = true;
-  showLoading("Analyzing source & generating script…");
+  const keys = getKeys();
+  showLoading("Waking up server… first request may take ~60s on free tier");
   try {
     const res = await fetch("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, keys }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Request failed");
@@ -118,6 +189,7 @@ async function uploadFile(file, style) {
   const fd = new FormData();
   fd.append("file", file);
   fd.append("style", style);
+  fd.append("keys", JSON.stringify(getKeys()));
   try {
     const res = await fetch("/api/projects/upload", { method: "POST", body: fd });
     const data = await res.json();

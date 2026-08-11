@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend import pipeline, fetch, images, llm, marp_pres, tts, providers
+from backend.key_override import effective_config
 from backend.pipeline import Project, ProjectStore, STYLES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -52,6 +53,7 @@ class ProjectCreate(BaseModel):
     source: str = ""
     style: str = "educational"
     title: str = ""
+    keys: dict | None = None   # per-request provider keys from the browser
 
 
 # ---------------------------------------------------------------- routes
@@ -85,14 +87,17 @@ def create_project(body: ProjectCreate, background_tasks: BackgroundTasks):
     # stash the raw source for the background worker
     proj.source_text = body.source[:20000]
     STORE.save(proj)
-    background_tasks.add_task(_process_project, pid, body.source_type, body.source, body.style, body.title)
+    cfg = effective_config(body.model_dump() if hasattr(body, "model_dump") else {})
+    background_tasks.add_task(_process_project, pid, body.source_type, body.source, body.style, body.title, cfg)
     return _project_view(proj)
 
 
-def _process_project(pid: str, source_type: str, source: str, style: str, title: str) -> None:
+def _process_project(pid: str, source_type: str, source: str, style: str, title: str, cfg=None) -> None:
     """Background worker: extract → summarize → script → enrich → save.
     NOTE: only fast, pure-Python work happens here. Marp HTML conversion is
     deferred to the /presentation endpoint (lazy, never blocks the worker)."""
+    if cfg is None:
+        from backend.providers import CONFIG as cfg
     proj = STORE.load(pid)
     if not proj:
         return
@@ -106,10 +111,10 @@ def _process_project(pid: str, source_type: str, source: str, style: str, title:
         proj.source_text = text[:20000]
         proj.title = title or pipeline._title_from(text)
         proj.outline = pipeline.build_outline(text, max_slides=6)
-        proj.script, proj.script_provider = llm.generate_script(proj.outline, style, proj.title)
+        proj.script, proj.script_provider = llm.generate_script(proj.outline, style, proj.title, cfg)
         proj.words, proj.duration = pipeline.word_timeline(proj.script, style, proj.outline)
         for i, slide in enumerate(proj.outline):
-            imgs = images.search_images(slide["heading"], n=1)
+            imgs = images.search_images(slide["heading"], n=1, cfg=cfg)
             slide["image"] = imgs[0] if imgs else {"url": None, "source": "generated"}
             slide["bg"] = images.svg_background(proj.title + str(i))
         # Marp markdown is instant (pure string); HTML deck is lazy
@@ -123,7 +128,8 @@ def _process_project(pid: str, source_type: str, source: str, style: str, title:
 
 
 @app.post("/api/projects/upload")
-async def upload_project(file: UploadFile = File(...), style: str = Form("educational"), background_tasks: BackgroundTasks = BackgroundTasks()):
+async def upload_project(file: UploadFile = File(...), style: str = Form("educational"),
+                         keys: str = Form(""), background_tasks: BackgroundTasks = BackgroundTasks()):
     data = await file.read()
     try:
         text = data.decode("utf-8", errors="ignore")
@@ -137,18 +143,25 @@ async def upload_project(file: UploadFile = File(...), style: str = Form("educat
         raise HTTPException(400, "Could not read text from the uploaded file.")
     body = ProjectCreate(source_type="text", source=text, style=style,
                          title=file.filename.rsplit(".", 1)[0].replace("-", " ").replace("_", " "))
+    if keys:
+        import json as _json
+        try:
+            body.keys = _json.loads(keys)
+        except Exception:
+            pass
     return create_project(body, background_tasks)
 
 
 @app.post("/api/projects/{pid}/script")
-def regenerate_script(pid: str, style: str = "educational"):
+def regenerate_script(pid: str, style: str = "educational", keys: dict | None = None):
     proj = STORE.load(pid)
     if not proj:
         raise HTTPException(404, "project not found")
     if style not in STYLES:
         raise HTTPException(400, "unknown style")
+    cfg = effective_config({"keys": keys} if keys else {})
     proj.style = style
-    proj.script, proj.script_provider = llm.generate_script(proj.outline, style, proj.title)
+    proj.script, proj.script_provider = llm.generate_script(proj.outline, style, proj.title, cfg)
     proj.words, proj.duration = pipeline.word_timeline(proj.script, style, proj.outline)
     proj.marp = marp_pres.outline_to_marp(proj.title, proj.outline, style)
     proj.marp_html = ""
@@ -157,18 +170,19 @@ def regenerate_script(pid: str, style: str = "educational"):
 
 
 @app.post("/api/projects/{pid}/tts")
-def synthesize(pid: str, voice: str = ""):
+def synthesize(pid: str, voice: str = "", keys: dict | None = None):
     """Generate TTS audio with elevenlabs/nim; else mark for browser TTS."""
     proj = STORE.load(pid)
     if not proj:
         raise HTTPException(404, "project not found")
-    provider = tts.tts_provider()
+    cfg = effective_config({"keys": keys} if keys else {})
+    provider = tts.tts_provider(cfg)
     audio = None
     if provider == "elevenlabs":
-        audio, _ = tts.elevenlabs_synthesize(proj.script, voice or None)
+        audio, _ = tts.elevenlabs_synthesize(proj.script, voice or None, cfg)
         (AUDIO_DIR / f"{pid}.mp3").write_bytes(audio)
     elif provider == "nvidia_nim":
-        audio, _ = tts.nim_synthesize(proj.script)
+        audio, _ = tts.nim_synthesize(proj.script, cfg)
         (AUDIO_DIR / f"{pid}.mp3").write_bytes(audio)
     return {
         "provider": provider,
