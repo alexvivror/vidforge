@@ -156,7 +156,7 @@ async function generate() {
   }
   $("#errorBox").hidden = true;
   const keys = getKeys();
-  showLoading("Waking up server… first request may take ~60s on free tier");
+  showStatus("Waking up server… first request may take ~60s on free tier");
   try {
     const res = await fetch("/api/projects", {
       method: "POST",
@@ -171,21 +171,21 @@ async function generate() {
     while (true) {
       const r2 = await fetch(`/api/projects/${pid}`);
       const d2 = await r2.json();
-      if (d2.status === "ready") { hideLoading(); loadProject(d2); return; }
-      if (d2.status === "failed") { hideLoading(); showError(d2.script ? d2.script : "Processing failed — the source may not have enough readable content."); return; }
-      if (Date.now() - started > 180000) { hideLoading(); showError("Timed out — please try again."); return; }
-      showLoading(`Analyzing source… (${Math.round((Date.now() - started) / 1000)}s)`);
+      if (d2.status === "ready") { hideStatus(); loadProject(d2); return; }
+      if (d2.status === "failed") { hideStatus(); showError(d2.script ? d2.script : "Processing failed — the source may not have enough readable content."); return; }
+      if (Date.now() - started > 180000) { hideStatus(); showError("Timed out — please try again."); return; }
+      showStatus(`Analyzing source… (${Math.round((Date.now() - started) / 1000)}s)`);
       await new Promise((r) => setTimeout(r, 1500));
     }
   } catch (e) {
-    hideLoading();
+    hideStatus();
     showError(e.message);
   }
 }
 
 async function uploadFile(file, style) {
   $("#errorBox").hidden = true;
-  showLoading("Reading file…");
+  showStatus("Reading file…");
   const fd = new FormData();
   fd.append("file", file);
   fd.append("style", style);
@@ -194,21 +194,21 @@ async function uploadFile(file, style) {
     const res = await fetch("/api/projects/upload", { method: "POST", body: fd });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Upload failed");
-    hideLoading();
+    hideStatus();
     // background processing — poll until ready
     const pid = data.id;
     const started = Date.now();
     while (true) {
       const r2 = await fetch(`/api/projects/${pid}`);
       const d2 = await r2.json();
-      if (d2.status === "ready") { hideLoading(); loadProject(d2); return; }
-      if (d2.status === "failed") { hideLoading(); showError("Processing failed — the file may not have enough readable content."); return; }
-      if (Date.now() - started > 180000) { hideLoading(); showError("Timed out — please try again."); return; }
-      showLoading(`Analyzing file… (${Math.round((Date.now() - started) / 1000)}s)`);
+      if (d2.status === "ready") { hideStatus(); loadProject(d2); return; }
+      if (d2.status === "failed") { hideStatus(); showError("Processing failed — the file may not have enough readable content."); return; }
+      if (Date.now() - started > 180000) { hideStatus(); showError("Timed out — please try again."); return; }
+      showStatus(`Analyzing file… (${Math.round((Date.now() - started) / 1000)}s)`);
       await new Promise((r) => setTimeout(r, 1500));
     }
   } catch (e) {
-    hideLoading();
+    hideStatus();
     showError(e.message);
   }
 }
@@ -218,11 +218,18 @@ function showError(msg) {
   box.textContent = msg;
   box.hidden = false;
 }
-function showLoading(text) {
-  $("#loadingText").textContent = text;
-  $("#loading").hidden = false;
+function showStatus(text, spinner = true) {
+  const line = $("#statusLine");
+  if (!line) return;
+  $("#statusText").textContent = text;
+  $("#statusDot").style.animation = spinner ? "pulse 1.1s ease-in-out infinite" : "none";
+  $("#statusDot").style.background = spinner ? "var(--accent)" : "var(--success)";
+  line.hidden = false;
 }
-function hideLoading() { $("#loading").hidden = true; }
+function hideStatus() {
+  const line = $("#statusLine");
+  if (line) line.hidden = true;
+}
 
 /* ---------------- load project ---------------- */
 async function loadProject(proj) {
@@ -439,15 +446,15 @@ $("#btnRestyle").addEventListener("click", restyle);
 
 async function restyle() {
   if (!state.project) return;
-  showLoading("Re-styling script…");
+  showStatus("Re-styling script…");
   try {
     const res = await fetch(`/api/projects/${state.project.id}/script?style=${$("#inputStyle").value}`, { method: "POST" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail);
-    hideLoading();
+    hideStatus();
     loadProject(data);
   } catch (e) {
-    hideLoading();
+    hideStatus();
     showError(e.message);
   }
 }

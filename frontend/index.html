@@ -97,6 +97,13 @@
         </button>
       </div>
 
+      <!-- non-blocking status line — NEVER covers the page -->
+      <div class="status-line" id="statusLine" hidden>
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Working…</span>
+        <button class="btn btn-mini" id="statusCancel" hidden>Cancel</button>
+      </div>
+
       <div class="error" id="errorBox" hidden></div>
     </section>
 
@@ -154,11 +161,6 @@
   <footer class="footer">
     <span>VidForge AI · planning by LLM, execution by open tools · your content never leaves the browser for narration</span>
   </footer>
-</div>
-
-<div class="loading-overlay" id="loading" hidden>
-  <div class="spinner"></div>
-  <p id="loadingText">Analyzing source…</p>
 </div>
 
 <!-- ============ API SETTINGS MODAL ============ -->
