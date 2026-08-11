@@ -172,7 +172,10 @@ def extract_source(source_type: str, source: str) -> str:
     if source_type == "url":
         if trafilatura is None:
             raise RuntimeError("trafilatura not installed — can't fetch URL")
-        downloaded = trafilatura.fetch_url(source)
+        try:
+            downloaded = trafilatura.fetch_url(source)
+        except Exception as e:
+            raise RuntimeError(f"Could not fetch URL: {source} ({e})")
         if not downloaded:
             raise RuntimeError(f"Could not fetch URL: {source}")
         text = trafilatura.extract(downloaded, include_comments=False)
@@ -264,20 +267,32 @@ def word_timeline(script: str, style: str, slides: list[dict]) -> tuple[list[dic
 # ---------------------------------------------------------------- store
 
 class ProjectStore:
+    """Persists projects to disk AND keeps an in-memory cache.
+    The memory cache survives Render free-tier filesystem resets so active
+    projects keep working even if the ephemeral disk is wiped mid-session."""
+
     def __init__(self, root: Path):
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
+        self._cache: dict[str, Project] = {}
 
     def _path(self, pid: str) -> Path:
         return self.root / f"{pid}.json"
 
     def save(self, p: Project) -> None:
-        self._path(p.id).write_text(json.dumps(asdict(p), indent=2))
+        self._cache[p.id] = p
+        try:
+            self._path(p.id).write_text(json.dumps(asdict(p), indent=2))
+        except OSError:
+            pass  # disk read-only / ephemeral — memory cache still serves
 
     def load(self, pid: str) -> Optional[Project]:
+        if pid in self._cache:
+            return self._cache[pid]
         path = self._path(pid)
         if not path.exists():
             return None
         data = json.loads(path.read_text())
         p = Project(**{k: data[k] for k in Project.__dataclass_fields__ if k in data})
+        self._cache[pid] = p
         return p

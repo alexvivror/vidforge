@@ -90,7 +90,9 @@ def create_project(body: ProjectCreate, background_tasks: BackgroundTasks):
 
 
 def _process_project(pid: str, source_type: str, source: str, style: str, title: str) -> None:
-    """Background worker: extract → summarize → script → enrich → save."""
+    """Background worker: extract → summarize → script → enrich → save.
+    NOTE: only fast, pure-Python work happens here. Marp HTML conversion is
+    deferred to the /presentation endpoint (lazy, never blocks the worker)."""
     proj = STORE.load(pid)
     if not proj:
         return
@@ -110,17 +112,14 @@ def _process_project(pid: str, source_type: str, source: str, style: str, title:
             imgs = images.search_images(slide["heading"], n=1)
             slide["image"] = imgs[0] if imgs else {"url": None, "source": "generated"}
             slide["bg"] = images.svg_background(proj.title + str(i))
-        proj.marp, proj.marp_html = _build_marp(proj)
+        # Marp markdown is instant (pure string); HTML deck is lazy
+        proj.marp = marp_pres.outline_to_marp(proj.title, proj.outline, proj.style)
+        proj.marp_html = ""
         proj.status = "ready"
     except Exception as e:
         print(f"[worker] {pid} failed: {e}")
         proj.status = "failed"
     STORE.save(proj)
-
-
-def _build_marp(proj):
-    pres = marp_pres.build_presentation(proj.title, proj.outline, proj.style)
-    return pres["marp"], pres["html"]
 
 
 @app.post("/api/projects/upload")
@@ -151,7 +150,8 @@ def regenerate_script(pid: str, style: str = "educational"):
     proj.style = style
     proj.script, proj.script_provider = llm.generate_script(proj.outline, style, proj.title)
     proj.words, proj.duration = pipeline.word_timeline(proj.script, style, proj.outline)
-    proj.marp, proj.marp_html = _build_marp(proj)
+    proj.marp = marp_pres.outline_to_marp(proj.title, proj.outline, style)
+    proj.marp_html = ""
     STORE.save(proj)
     return _project_view(proj)
 
@@ -214,7 +214,11 @@ def get_presentation(pid: str):
     proj = STORE.load(pid)
     if not proj:
         raise HTTPException(404, "project not found")
-    return {"project_id": pid, "title": proj.title, "marp": proj.marp, "html": proj.marp_html}
+    html = proj.marp_html
+    if not html:
+        # lazy conversion — never blocks the worker; marp-cli may be absent
+        html = marp_pres.marp_to_html(proj.marp) or ""
+    return {"project_id": pid, "title": proj.title, "marp": proj.marp, "html": html}
 
 
 def _project_view(p: Project) -> dict:
